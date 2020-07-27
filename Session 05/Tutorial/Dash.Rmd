@@ -1,0 +1,248 @@
+---
+title: "Tests and Visualization"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(dplyr)
+library(knitr)
+library(hrbrthemes)
+library(GGally)
+library(viridis)
+
+sr <- read.csv("student.record.csv")
+sc <- read.csv("student.course.short.csv")
+data <- merge(sc,sr,by='ANONID',all.x=FALSE)
+min_gpao <- 1
+max_gpao <- 4
+data = data %>% 
+  filter(GPAO<=max_gpao) %>%
+  filter(GPAO>=min_gpao) %>%
+  filter(GRD_PTS_PER_UNIT<=max_gpao) %>%
+  filter(GRD_PTS_PER_UNIT>=min_gpao) 
+
+data$course <- paste(data$SUBJECT,data$CATALOG_NBR,sep=" ")
+
+courses_select<- unique(data$course)
+
+compute.grade.penalty <- function(population)
+{
+  
+  nstd <- length(population)         #Number of students
+  gpen <- population$GRD_PTS_PER_UNIT-population$GPAO
+  
+  mn   <- mean(gpen)              #Mean Grade Penalty
+  sd   <- sd(gpen)                #Standard deviation
+  se   <- sd/sqrt(nstd)           #Naive standard error
+  return(data.frame(mn,se))
+
+}
+
+```
+
+
+Test
+=======================================================================
+
+Column {.sidebar}
+-----------------------------------------------------------------------
+
+```{r}
+selectInput("course", label = "Select course:",
+            choices = courses_select, selected = courses_select[1])
+```
+
+Column {data-width=650, data-height=800}
+-----------------------------------------------------------------------
+
+### Differences
+
+```{r}
+renderPlot({
+  
+  data_course =
+  data %>%
+  filter(course==input$course)
+  
+  nbins=15
+  binsize  <- (max_gpao-min_gpao)/nbins
+  data_course$bin<-floor((data_course$GPAO-min_gpao)/binsize) + 1
+
+  fem.binned = data_course %>%
+  filter(SEX=='F') %>%
+  group_by(bin) %>%
+  summarize(
+    meanGpa = mean(GPAO),
+    meanGrade = mean(GRD_PTS_PER_UNIT),
+    seGrade = sd(GRD_PTS_PER_UNIT/sqrt(n()))
+  )
+
+ mal.binned <- data_course %>%
+  filter(SEX=='M') %>%
+  group_by(bin) %>%
+  summarize(
+    meanGpa = mean(GPAO),
+    meanGrade = mean(GRD_PTS_PER_UNIT),
+    seGrade = sd(GRD_PTS_PER_UNIT/sqrt(n()))
+  )
+
+plot(mal.binned$meanGpa,mal.binned$meanGrade,pch=19,col='red',xlab='GPAO',ylab='<Grade>',main="Comparison between Penalty",xlim=c(1,4),ylim=c(1,4))
+arrows(mal.binned$meanGpa,mal.binned$meanGrade-mal.binned$seGrade,mal.binned$meanGpa,mal.binned$meanGrade+mal.binned$seGrade,code=0,col='red')
+
+points(fem.binned$meanGpa,fem.binned$meanGrade,pch=19)
+arrows(fem.binned$meanGpa,fem.binned$meanGrade-fem.binned$seGrade,fem.binned$meanGpa,fem.binned$meanGrade+fem.binned$seGrade,code=0)
+
+lines(c(1,4),c(1,4)) 
+
+fem_data <- data_course %>%
+  filter(SEX=='F')
+
+mal_data <- data_course %>%
+  filter(SEX=='M')
+
+fem_penalty <- signif(compute.grade.penalty(fem_data),3)
+mal_penalty <- signif(compute.grade.penalty(mal_data),3)
+
+
+text(1,3.75,'SIMPLE GRADE PENALTY',pos=4)
+text(1,3.5,paste("Females:",fem_penalty$mn,'+/-',fem_penalty$se,sep=" "),pos=4)
+text(1,3.25,paste("Males:",mal_penalty$mn,'+/-',mal_penalty$se,sep=" "),col='red',pos=4)
+
+
+})
+
+
+```
+
+### Test
+
+```{r}
+renderUI({
+  data_course =
+  data %>%
+  filter(course==input$course)
+  
+  data_course$Penalty<-data_course$GRD_PTS_PER_UNIT-data_course$GPAO
+  
+  fem_data <- data_course %>%
+  filter(SEX=='F')
+
+mal_data <- data_course %>%
+  filter(SEX=='M')
+
+result<-ks.test(fem_data$Penalty,mal_data$Penalty)
+
+if (result$p.value<0.01)
+{
+  HTML("The difference is <b>significant</b>")
+}
+else
+{
+  HTML("The difference is <b>not significant</b>")
+}
+})
+```
+
+Visualization
+=======================================================================
+
+Row
+-------------------------------------
+    
+### Violin
+    
+```{r}
+library(ggplot2)
+renderPlot({
+  
+  data_course =
+  data %>%
+  filter(course==input$course)
+  
+  data_course$Penalty<-data_course$GRD_PTS_PER_UNIT-data_course$GPAO
+  
+ggplot(data_course, aes(x=SEX, y=Penalty, fill=SEX)) +
+  geom_violin()
+})
+```
+ 
+### HeatMap
+    
+```{r}
+renderPlot({
+  data_course =
+  data %>%
+  filter(course==input$course)
+  
+  student_data<-sr %>%
+    filter(ANONID %in% data_course$ANONID)%>%
+   select(HSGPA,LAST_ACT_ENGL_SCORE,LAST_ACT_MATH_SCORE,LAST_ACT_READ_SCORE,LAST_ACT_SCIRE_SCORE,LAST_ACT_COMP_SCORE)
+   colnames(student_data)<-c("HSGPA","ENG","MATH","READ","SCI","COMP")
+   student_data<-student_data[complete.cases(student_data), ]
+   student_data<-student_data[1:100,]
+   matrix_data <- as.matrix(student_data)
+   heatmap(matrix_data,scale="column",col=heat.colors(256))
+})
+``` 
+
+Row
+-------------------------------------
+    
+### Density Plot
+    
+```{r}
+renderPlot({
+  data_course =
+  data %>%
+  filter(course==input$course)
+  data_course$Penalty<-data_course$GRD_PTS_PER_UNIT-data_course$GPAO
+  fem_data <- data_course %>%
+  filter(SEX=='F')
+  
+ 
+  
+  ggplot(fem_data, aes(x=Penalty, y=GPAO) ) +
+  geom_bin2d(bins=5) 
+  
+})
+
+```
+    
+### Parallel Coordinates
+
+```{r}
+renderPlot({
+  data_course =
+  data %>%
+  filter(course==input$course)
+
+  student_data<-sr %>%
+    filter(ANONID %in% data_course$ANONID)%>%
+   select(HSGPA,LAST_ACT_ENGL_SCORE,LAST_ACT_MATH_SCORE,LAST_ACT_READ_SCORE,LAST_ACT_SCIRE_SCORE,LAST_ACT_COMP_SCORE)
+   colnames(student_data)<-c("HSGPA","ENG","MATH","READ","SCI","COMP")
+   student_data<-student_data[complete.cases(student_data), ]
+   student_data<-student_data[1:100,]
+   matrix_data <- as.matrix(student_data)
+   clusters<-kmeans(matrix_data,4)
+  student_data$cluster<-as.factor(clusters$cluster)
+  ggparcoord(student_data,
+    columns = 1:6, groupColumn = 7, order = "anyClass",
+    scale="uniminmax",
+    showPoints = TRUE, 
+    title = "Standardize to Min = 0 and Max = 1",
+    alphaLines = 0.3
+    ) + 
+  scale_color_viridis(discrete=TRUE) +
+  theme_ipsum()+
+  theme(
+    legend.position="none",
+    plot.title = element_text(size=13)
+  ) +
+  xlab("")
+})
+```
